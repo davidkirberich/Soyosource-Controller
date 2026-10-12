@@ -30,6 +30,9 @@ void configSetDefaults(Config &c) {
     c.shelly_l2 = true;
     c.shelly_l3 = true;
     c.poll_interval_ms = 500;
+    c.shelly_export_l1 = true;
+    c.shelly_export_l2 = true;
+    c.shelly_export_l3 = true;
 
     c.max_power = 900;
     c.soyo_count = 1;
@@ -81,6 +84,10 @@ static void configToDoc(const Config &c, JsonDocument &doc) {
     doc["shelly_l2"] = c.shelly_l2;
     doc["shelly_l3"] = c.shelly_l3;
     doc["poll_interval_ms"] = c.poll_interval_ms;
+    doc["shelly_export_ip"] = c.shelly_export_ip;
+    doc["shelly_export_l1"] = c.shelly_export_l1;
+    doc["shelly_export_l2"] = c.shelly_export_l2;
+    doc["shelly_export_l3"] = c.shelly_export_l3;
 
     doc["json_url"] = c.json_url;
     doc["json_path"] = c.json_path;
@@ -156,6 +163,10 @@ static void docToConfig(JsonDocument &doc, Config &c) {
     if (!doc["shelly_l2"].isNull()) c.shelly_l2 = doc["shelly_l2"];
     if (!doc["shelly_l3"].isNull()) c.shelly_l3 = doc["shelly_l3"];
     if (!doc["poll_interval_ms"].isNull()) c.poll_interval_ms = doc["poll_interval_ms"];
+    if (!doc["shelly_export_ip"].isNull()) strlcpy(c.shelly_export_ip, doc["shelly_export_ip"], sizeof(c.shelly_export_ip));
+    if (!doc["shelly_export_l1"].isNull()) c.shelly_export_l1 = doc["shelly_export_l1"];
+    if (!doc["shelly_export_l2"].isNull()) c.shelly_export_l2 = doc["shelly_export_l2"];
+    if (!doc["shelly_export_l3"].isNull()) c.shelly_export_l3 = doc["shelly_export_l3"];
 
     if (!doc["json_url"].isNull()) strlcpy(c.json_url, doc["json_url"], sizeof(c.json_url));
     if (!doc["json_path"].isNull()) strlcpy(c.json_path, doc["json_path"], sizeof(c.json_path));

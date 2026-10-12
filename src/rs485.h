@@ -55,5 +55,9 @@ void rs485Loop();
 // >1W, Intervall siehe config.rs485_send_interval_ms) übernimmt rs485Loop().
 void rs485SetTargetDemand(int32_t watts);
 
+// Sendet beim aktivierten Notaus sofort einen 0-W-Sollwert, sofern RS485
+// nicht pausiert ist (z.B. während eines OTA-Uploads).
+void rs485EmergencyStop();
+
 // Für OTA: stoppt jegliches Senden und hält DE/RE auf Empfang (LOW).
 void rs485Pause(bool pause);

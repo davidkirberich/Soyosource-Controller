@@ -58,10 +58,21 @@ static const char HELP_HTML[] PROGMEM = R"rawliteral(
   <div class="row"><span>MqttSub</span><span>Messwert kommt per MQTT-Nachricht rein, reagiert sofort ohne Abfrageintervall</span></div>
   <div class="row"><span>Shelly Gen1/Gen2</span><span>Gerät fragt den Shelly-Stromzähler selbst per HTTP ab (Intervall einstellbar), Phasen L1/L2/L3 frei kombinierbar</span></div>
   <div class="row"><span>JSON HTTP Client</span><span>fragt eine beliebige selbst konfigurierbare JSON-URL ab, Wert über einen Punkt-getrennten Pfad ausgelesen</span></div>
-  <p class="hint">Bei Shelly/JSON: nach 3 Fehlversuchen in Folge (dazu zählt
+  <p class="hint">Bei Shelly/JSON: nach 10 Fehlversuchen in Folge (dazu zählt
   auch ein fehlendes WLAN, nicht nur eine ausbleibende Antwort des
   Messwert-Servers) schaltet die Firmware auf den konfigurierten
   Fallback-Watt-Wert um, bis wieder 3 Anfragen in Folge erfolgreich waren.</p>
+</div>
+
+<div class="card">
+  <h2>Optionaler Einspeisezähler</h2>
+  <p>Die Konfiguration bietet getrennte IP- und Phasenauswahl für einen
+  zusätzlichen Shelly Gen2 Pro, der die Einspeisung misst. Er wird mit
+  demselben Poll-Intervall wie der Verbrauchszähler abgefragt. Die Werte
+  erscheinen auf der Hauptseite und im MQTT-Status; Phasen und Summe sind
+  nur verfügbar, wenn die entsprechende Phase konfiguriert und erfolgreich
+  gelesen wurde. Dieser Zähler dient ausschließlich dem Monitoring:
+  Verbindungsfehler beeinflussen die Regelung und den Fallback nicht.</p>
 </div>
 
 <div class="card">
@@ -87,9 +98,23 @@ static const char HELP_HTML[] PROGMEM = R"rawliteral(
   <p>Optional aktivierbar, begrenzt die maximale Leistung PRO Inverter in
   einem Zeitfenster (z.B. 22:00-06:00) zusätzlich zur normalen
   Max.-Leistung-Grenze — z.B. um nachts leiser/schonender zu fahren. Das
+  ist keine feste Einspeisung; die normale Regelung läuft im Zeitfenster
+  weiter. Das
   Zeitfenster darf über Mitternacht gehen. Wirkt ebenfalls sofort, ohne
   Neustart; die Uhrzeit kommt per NTP aus dem Internet (nur verfügbar,
   sobald das Gerät im WLAN ist).</p>
+</div>
+
+<div class="card">
+  <h2>Konfiguration: MQTT und OTA</h2>
+  <p><b>MQTT</b> verbindet den Controller mit dem eingetragenen Broker, um
+  Messwerte zu empfangen (MqttSub) und Statuswerte zu veröffentlichen. Der
+  MQTT-Statuspunkt auf der Hauptseite zeigt ausschließlich, ob gerade eine
+  Verbindung zum Broker besteht. Änderungen an MQTT-Einstellungen benötigen
+  einen Neustart.</p>
+  <p><b>OTA</b> ermöglicht den Firmware-Upload über die Update-Seite im WLAN.
+  Das eingestellte Passwort schützt diesen Upload; eine Passwortänderung
+  wird nach einem Neustart wirksam.</p>
 </div>
 
 <div class="card">
@@ -106,6 +131,7 @@ static const char HELP_HTML[] PROGMEM = R"rawliteral(
   <div class="row"><span><span class="status-dot on"></span> ESP</span><span>Webinterface antwortet gerade</span></div>
   <div class="row"><span><span class="status-dot on"></span> Soyo</span><span>RS485-Antwort vom Wechselrichter da (manche Geräte antworten grundsätzlich nie, das ist normal)</span></div>
   <div class="row"><span><span class="status-dot on"></span> Messwertquelle</span><span>nur bei Shelly/JSON-Modus, rot bei Fallback</span></div>
+  <div class="row"><span><span class="status-dot on"></span> MQTT</span><span>grün nur, solange eine Verbindung zum MQTT-Broker besteht; rot andernfalls</span></div>
 </div>
 
 <div class="card">

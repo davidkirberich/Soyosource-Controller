@@ -126,6 +126,21 @@ Drei Screens, automatischer Wechsel:
 
 ## Build & Flash
 
+Firmware ohne Upload bauen:
+
+```
+pio run
+```
+
+Die hardwareunabhängigen Sicherheitshilfen lassen sich separat mit PlatformIO
+und einem installierten nativen C++-Compiler (GCC/MinGW-w64) testen:
+
+```
+pio test -e native
+```
+
+Nur nach bewusster Auswahl des richtigen seriellen Ports flashen:
+
 ```
 pio run -t upload
 pio run -t uploadfs   # LittleFS-Image (nur nötig falls Dateien in data/ liegen)
@@ -149,11 +164,14 @@ Drei Tabs, umschaltbar ohne Neuladen der Seite:
 
 - **Hauptseite**: Live-Status (Demand, Netzwert, Modus, Notaus, RSSI, Laufzeit,
   Heap, Soyo-RS485-Werte falls verfügbar) sowie die Notaus-/Neustart-Buttons.
-  Oben drei Statuspunkte: **ESP** (grün, solange `/status` antwortet), **Soyo**
+  Ein optional konfigurierter Einspeisezähler wird unter dem Netzwert mit den
+  ausgewählten Phasen und ihrer Summe angezeigt.
+  Oben vier Statuspunkte: **ESP** (grün, solange `/status` antwortet), **Soyo**
   (grün nur bei tatsächlicher RS485-Antwort — bleibt bei Geräten ohne
   Status-Antwort dauerhaft aus, das ist kein Fehler, siehe Abschnitt "RS485
   Status-Response"), **Messwertquelle** (nur bei Shelly/JSON-Modus sichtbar,
-  rot bei aktivem Fallback).
+  rot bei aktivem Fallback), **MQTT** (grün ausschließlich bei bestehender
+  Broker-Verbindung, andernfalls rot).
 - **Gerätekonfiguration**: Betriebsmodus, Regelung, Nachtmodus, OTA, Config-
   Download/-Upload.
 - **Netzwerkkonfiguration**: WLAN, MQTT.
@@ -219,11 +237,23 @@ formatiert, Gerät startet neu und geht wieder in den AP-Setup-Modus.
   `/status`-Antwort, Gen2 über `a_act_power`/`b_act_power`/`c_act_power`.
   Ein einzelner HTTP-Request liefert dabei immer alle drei Phasen auf einmal,
   unabhängig von der Auswahl.
+- **Optionaler Einspeisezähler**: ein zusätzlicher Shelly Gen2 Pro wird über
+  `/rpc/EM.GetStatus?id=0` abgefragt. Er verwendet dasselbe Poll-Intervall wie
+  der Verbrauchszähler; es gibt keine separaten Intervall-Einstellungen.
+  Ausgewählte Phasen und Summe werden auf der Hauptseite sowie im MQTT-Status
+  ausgegeben. Messfehler dieses reinen Monitoring-Zählers beeinflussen weder
+  Regelung noch Fallback.
+- **MQTT-Status**: `demand` ist die angeforderte Gesamtleistung über alle
+  konfigurierten Soyos; `demand_per_inverter` enthält zusätzlich den
+  Pro-Inverter-Sollwert. `verbrauch_l1` bis `verbrauch_l3` und
+  `einspeisung_l1` bis `einspeisung_l3` enthalten die gültigen Phasenwerte
+  der jeweiligen Zähler. Nicht verfügbare Werte werden als JSON-`null`
+  veröffentlicht.
 - **JSON HTTP Client**: generischer Poll gegen eine beliebige JSON-URL mit
   Punkt-separiertem Pfad (z.B. `StatusSNS.SML.DJ_TPWRCURR`), gleiches
   einstellbares Poll-Intervall wie bei Shelly.
 
-Bei den pollenden Modi (Shelly/JSON) schaltet die Firmware nach 3 Fehlversuchen in
+Bei den pollenden Modi (Shelly/JSON) schaltet die Firmware nach 10 Fehlversuchen in
 einen Fallback-Zustand (`fallback_watt`) und kehrt nach 3 erfolgreichen Antworten
 wieder in den Normalbetrieb zurück.
 

@@ -22,6 +22,7 @@
 #include "http_server.h"
 #include "ota.h"
 #include "display.h"
+#include "safety_logic.h"
 
 // Die einzige Config-Instanz im ganzen Projekt (siehe "extern Config config;"
 // in config.h -- dort wird sie nur bekanntgegeben, hier tatsächlich angelegt).
@@ -122,10 +123,10 @@ static void runControlLoop() {
     // seiner staerksten Geraete eintragen, statt selbst Summe/soyo_count
     // ausrechnen zu muessen.
     if (config.mode == MODE_STATIC) {
-        target = config.static_watt / config.soyo_count;
+        target = distributeTotalDemand(config.static_watt, config.soyo_count);
         g_lastMeasurementMillis = millis(); // kein externer Messwert im Static-Modus nötig
     } else if (g_fallbackActive) {
-        target = config.fallback_watt / config.soyo_count;
+        target = distributeTotalDemand(config.fallback_watt, config.soyo_count);
     } else if (g_lastMeasurementMillis != lastProcessedMeasurementMillis) {
         // Es liegt ein Messwert vor, der seit dem letzten Regeldurchlauf noch
         // nicht verarbeitet wurde -- jetzt (und nur jetzt) einmalig nachführen.
@@ -148,7 +149,6 @@ static void runControlLoop() {
         } else {
             target = g_demand; // Toleranzband: Sollwert unverändert
         }
-        target = constrain(target, 0, (int32_t)config.max_power);
         lastComputedTarget = target;
     } else {
         // Kein neuer Messwert seit dem letzten Durchlauf -> zuletzt berechneten
@@ -156,9 +156,8 @@ static void runControlLoop() {
         target = lastComputedTarget;
     }
 
-    if (isNightMode()) {
-        target = constrain(target, 0, (int32_t)config.night_max_power);
-    }
+    target = applyDemandLimits(target, config.max_power, isNightMode(),
+                               config.night_max_power);
 
     rs485SetTargetDemand(target);
 }

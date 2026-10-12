@@ -4,12 +4,17 @@
 
 extern float         g_netzwert;              // letzter Messwert in Watt, inkl. calibration_offset_w
 extern unsigned long g_lastMeasurementMillis;
+extern float         g_shellyPhasePower[3];
+extern bool          g_shellyPhaseValid[3];
+extern float         g_shellyExportPhasePower[3];
+extern bool          g_shellyExportPhaseValid[3];
+extern float         g_shellyExportTotalW;
+extern bool          g_shellyExportValid;
 
 void shellyBegin();
 
-// Pollt je nach config.mode Shelly Gen1 / Gen2 / generischen JSON-HTTP-Client
-// alle 1000ms, aktualisiert g_netzwert und steuert die Fallback-Logik.
-// Wirkt nur in den Modi MODE_SHELLY_GEN1, MODE_SHELLY_GEN2, MODE_JSON_HTTP.
+// Pollt die konfigurierte Verbrauchsmessquelle und optional den
+// Einspeisezähler. Nur Fehler der Verbrauchsmessquelle steuern den Fallback.
 void shellyLoop();
 
 // Von HttpInterface- (/L1L2L3Auto) und MQTT-Modus aufgerufen, um einen extern

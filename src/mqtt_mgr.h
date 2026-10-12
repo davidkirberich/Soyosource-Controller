@@ -2,3 +2,4 @@
 
 void mqttBegin();
 void mqttLoop();
+bool mqttIsConnected();

@@ -8,6 +8,7 @@
 #include "rs485.h"
 #include "shelly.h"
 #include "wifi_mgr.h"
+#include "mqtt_mgr.h"
 #include "telnet_log.h"
 #include "help_page.h"
 
@@ -116,10 +117,12 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
       <span class="status-item"><span class="status-dot" id="dotEsp"></span>ESP</span>
       <span class="status-item"><span class="status-dot" id="dotSoyo"></span>Soyo</span>
       <span class="status-item" id="dotSourceItem"><span class="status-dot" id="dotSource"></span>Messwertquelle</span>
+      <span class="status-item"><span class="status-dot" id="dotMqtt"></span>MQTT</span>
     </span>
   </div>
   <div class="row"><span>Demand</span><span><b id="demand">-</b> W<span id="demandTotal"></span></span></div>
-  <div class="row"><span>Netzwert</span><span><b id="netz">-</b> W</span></div>
+  <div class="row"><span>Netzwert</span><span id="netz">-</span></div>
+  <div class="row" id="exportStatusRow" style="display:none;"><span>Einspeisung</span><span id="exportStatus">-</span></div>
   <div class="row"><span>Modus</span><span id="modeText">-</span></div>
   <div class="row"><span>Notaus</span><span id="notausState">-</span></div>
   <div class="row"><span>WLAN RSSI</span><span class="rssi-bars" id="rssiBars"></span></div>
@@ -194,6 +197,7 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
     <input type="text" id="mqtt_sub_topic">
     <label>Pub-Topic (Status)</label>
     <input type="text" id="mqtt_pub_topic">
+    <p class="hint">MQTT verbindet sich mit dem Broker und veröffentlicht dort Statuswerte. Der MQTT-Statuspunkt auf der Hauptseite zeigt ausschließlich, ob aktuell eine Broker-Verbindung besteht.</p>
     <button type="button" class="btn btn-blue" onclick="saveSection('mqtt')">MQTT speichern</button>
     <span class="saved-ok" id="saved-mqtt"></span>
   </fieldset>
@@ -232,6 +236,19 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
     <div class="checkbox-row"><input type="checkbox" id="shelly_l1"><label style="margin:0;">L1</label></div>
     <div class="checkbox-row"><input type="checkbox" id="shelly_l2"><label style="margin:0;">L2</label></div>
     <div class="checkbox-row"><input type="checkbox" id="shelly_l3"><label style="margin:0;">L3</label></div>
+
+    <fieldset>
+      <legend>Optionaler Einspeisezähler (Shelly Gen2 Pro)</legend>
+      <label>Shelly-IP des Einspeisezählers</label>
+      <input type="text" id="shelly_export_ip" placeholder="192.168.1.51">
+      <label>Phasen des Einspeisezählers (beliebig kombinierbar)</label>
+      <div class="checkbox-row"><input type="checkbox" id="shelly_export_l1"><label style="margin:0;">L1</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="shelly_export_l2"><label style="margin:0;">L2</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="shelly_export_l3"><label style="margin:0;">L3</label></div>
+      <p class="hint">Für die optionale Messung der Einspeisung über Shelly Gen2 Pro (HTTP-RPC). Der Zähler wird mit demselben Poll-Intervall wie der Verbrauchszähler abgefragt. Seine Werte dienen nur dem Monitoring; Messfehler beeinflussen weder Regelung noch Fallback.</p>
+      <button type="button" class="btn btn-blue" onclick="saveSection('einspeisezaehler')">Einspeisezähler speichern</button>
+      <span class="saved-ok" id="saved-einspeisezaehler"></span>
+    </fieldset>
 
     <div id="jsonSection">
       <label>JSON-URL</label>
@@ -299,6 +316,7 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
 
   <fieldset>
     <legend>Nachtmodus</legend>
+    <p class="hint">Begrenzt im eingestellten Zeitfenster die maximale Leistung pro Inverter. Es wird keine feste Leistung eingespeist; die normale Regelung läuft weiter.</p>
     <div class="checkbox-row"><input type="checkbox" id="night_mode_enabled" onchange="onNightToggle()"><label style="margin:0;">Aktiv</label></div>
     <div id="nightFields">
       <label>Von</label>
@@ -316,7 +334,7 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
     <legend>OTA</legend>
     <label>OTA-Passwort</label>
     <input type="password" id="ota_pass">
-    <div class="hint">Braucht einen Neustart, um wirksam zu werden.</div>
+    <div class="hint">Schützt den Firmware-Upload über die OTA-Update-Seite im WLAN. Eine Passwortänderung wird nach einem Neustart wirksam.</div>
     <button type="button" class="btn btn-blue" onclick="saveSection('ota')">OTA speichern</button>
     <span class="saved-ok" id="saved-ota"></span>
   </fieldset>
@@ -374,7 +392,16 @@ function refreshStatus(){
     // selbst. Nur anzeigen, wenn es überhaupt mehr als einen Soyo gibt, sonst
     // wäre "(x W gesamt)" nur eine Wiederholung derselben Zahl.
     document.getElementById('demandTotal').textContent=(d.soyo_count>1)?(' ('+(d.demand*d.soyo_count)+' W gesamt)'):'';
-    document.getElementById('netz').textContent=Number(d.netz).toFixed(1);
+    document.getElementById('netz').textContent=
+      'L1 '+fmtPower(d.verbrauch_l1)+' / L2 '+fmtPower(d.verbrauch_l2)+
+      ' / L3 '+fmtPower(d.verbrauch_l3)+' / Gesamt '+fmtPower(d.netz);
+    const exportParts=[];
+    if(d.einspeisung_l1_enabled) exportParts.push('L1 '+fmtPower(d.einspeisung_l1));
+    if(d.einspeisung_l2_enabled) exportParts.push('L2 '+fmtPower(d.einspeisung_l2));
+    if(d.einspeisung_l3_enabled) exportParts.push('L3 '+fmtPower(d.einspeisung_l3));
+    exportParts.push('Gesamt '+fmtPower(d.einspeisung));
+    document.getElementById('exportStatus').textContent=exportParts.join(' / ');
+    document.getElementById('exportStatusRow').style.display=d.einspeisung_configured?'flex':'none';
     document.getElementById('modeText').textContent=MODE_NAMES[d.mode]||d.mode;
     document.getElementById('notausState').textContent=d.notaus?'AKTIV':'inaktiv';
     document.getElementById('uptime').textContent=fmtUptime(d.uptime);
@@ -392,6 +419,8 @@ function refreshStatus(){
     // -- "aus" heißt hier nur "keine Antwort", nicht zwingend ein Fehler, deshalb
     // kein rotes "off", nur grün wenn eine Antwort da ist.
     document.getElementById('dotSoyo').classList.toggle('on', !!d.soyo);
+    document.getElementById('dotMqtt').classList.toggle('on', !!d.mqtt_connected);
+    document.getElementById('dotMqtt').classList.toggle('off', !d.mqtt_connected);
 
     const soyoSec=document.getElementById('soyoStatus');
     if(d.soyo){
@@ -419,6 +448,10 @@ function refreshStatus(){
   }).catch(()=>{
     document.getElementById('dotEsp').classList.remove('on');
   });
+}
+
+function fmtPower(value){
+  return (value===null||value===undefined)?'– W':Number(value).toFixed(1)+' W';
 }
 setInterval(refreshStatus,2000);
 refreshStatus();
@@ -495,6 +528,10 @@ function loadConfigForm(){
     document.getElementById('shelly_l1').checked=!!c.shelly_l1;
     document.getElementById('shelly_l2').checked=!!c.shelly_l2;
     document.getElementById('shelly_l3').checked=!!c.shelly_l3;
+    document.getElementById('shelly_export_ip').value=c.shelly_export_ip||'';
+    document.getElementById('shelly_export_l1').checked=!!c.shelly_export_l1;
+    document.getElementById('shelly_export_l2').checked=!!c.shelly_export_l2;
+    document.getElementById('shelly_export_l3').checked=!!c.shelly_export_l3;
 
     document.getElementById('json_url').value=c.json_url||'';
     document.getElementById('json_path').value=c.json_path||'';
@@ -562,6 +599,12 @@ const SECTION_BUILDERS = {
     shelly_l3: document.getElementById('shelly_l3').checked,
     json_url: document.getElementById('json_url').value,
     json_path: document.getElementById('json_path').value
+  }),
+  einspeisezaehler: () => ({
+    shelly_export_ip: document.getElementById('shelly_export_ip').value,
+    shelly_export_l1: document.getElementById('shelly_export_l1').checked,
+    shelly_export_l2: document.getElementById('shelly_export_l2').checked,
+    shelly_export_l3: document.getElementById('shelly_export_l3').checked
   }),
   regelung: () => ({
     max_power: parseInt(document.getElementById('max_power').value)||1200,
@@ -646,10 +689,22 @@ static void handleStatus() {
     doc["demand"] = g_demand;
     doc["soyo_count"] = config.soyo_count;
     doc["netz"] = g_netzwert;
+    if (g_shellyPhaseValid[0]) doc["verbrauch_l1"] = g_shellyPhasePower[0]; else doc["verbrauch_l1"] = nullptr;
+    if (g_shellyPhaseValid[1]) doc["verbrauch_l2"] = g_shellyPhasePower[1]; else doc["verbrauch_l2"] = nullptr;
+    if (g_shellyPhaseValid[2]) doc["verbrauch_l3"] = g_shellyPhasePower[2]; else doc["verbrauch_l3"] = nullptr;
+    doc["einspeisung_configured"] = strlen(config.shelly_export_ip) > 0;
+    doc["einspeisung_l1_enabled"] = config.shelly_export_l1;
+    doc["einspeisung_l2_enabled"] = config.shelly_export_l2;
+    doc["einspeisung_l3_enabled"] = config.shelly_export_l3;
+    if (g_shellyExportPhaseValid[0]) doc["einspeisung_l1"] = g_shellyExportPhasePower[0]; else doc["einspeisung_l1"] = nullptr;
+    if (g_shellyExportPhaseValid[1]) doc["einspeisung_l2"] = g_shellyExportPhasePower[1]; else doc["einspeisung_l2"] = nullptr;
+    if (g_shellyExportPhaseValid[2]) doc["einspeisung_l3"] = g_shellyExportPhasePower[2]; else doc["einspeisung_l3"] = nullptr;
+    if (g_shellyExportValid) doc["einspeisung"] = g_shellyExportTotalW; else doc["einspeisung"] = nullptr;
     doc["rssi"] = WiFi.RSSI();
     doc["mode"] = config.mode;
     doc["notaus"] = g_notaus;
     doc["fallback"] = g_fallbackActive;
+    doc["mqtt_connected"] = mqttIsConnected();
     doc["uptime"] = millis() / 1000;
     // Compile-Zeitstempel UND Git-Version, beide automatisch (kein manuelles
     // Pflegen nötig, anders als z.B. DISPLAY_FW_VERSION in display.h, die
@@ -698,6 +753,7 @@ static void handleL1L2L3Auto() {
 
 static void handleNotaus() {
     g_notaus = true;
+    rs485EmergencyStop();
     LOG("Notaus: aktiviert (Web)");
     server.send(200, "text/plain", "OK");
 }

@@ -60,6 +60,10 @@ struct Config {
     bool shelly_l1, shelly_l2, shelly_l3; // nur Gen2 wirksam
     uint16_t poll_interval_ms; // Abfrageintervall Shelly/JSON-HTTP, 400-2000ms
 
+    // Optionaler Shelly-Gen2-Pro-Einspeisezähler
+    char shelly_export_ip[32];
+    bool shelly_export_l1, shelly_export_l2, shelly_export_l3;
+
     // JSON HTTP Client
     char json_url[128];
     char json_path[64]; // Punkt-separiert, z.B. "StatusSNS.SML.DJ_TPWRCURR"

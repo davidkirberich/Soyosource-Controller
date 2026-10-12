@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "telnet_log.h"
+#include "safety_logic.h"
 
 int32_t    g_demand = 0;
 bool       g_notaus = false;
@@ -93,14 +94,7 @@ static void sendFrame(const uint8_t *frame, uint8_t len) {
 // keine eigene Erfindung.
 static void sendDemandFrame(uint16_t watt) {
     uint8_t frame[8];
-    frame[0] = 0x24;
-    frame[1] = 0x56;
-    frame[2] = 0x00;
-    frame[3] = 0x21;
-    frame[4] = (watt >> 8) & 0xFF; // High-Byte (obere 8 Bit) des Watt-Werts
-    frame[5] = watt & 0xFF;        // Low-Byte (untere 8 Bit) des Watt-Werts
-    frame[6] = 0x80;
-    frame[7] = (uint8_t)((264 - frame[4] - frame[5]) & 0xFF); // Prüfsumme
+    buildDemandFrame(watt, frame);
     sendFrame(frame, 8);
 }
 
@@ -188,6 +182,17 @@ static void applyDemand() {
     sendDemandFrame((uint16_t)g_demand);
     LOG(("RS485: Demand " + String(lastSentDemand) + "W -> " + String(g_demand) + "W").c_str());
     lastSentDemand = g_demand;
+}
+
+void rs485EmergencyStop() {
+    targetDemand = 0;
+    if (paused) return;
+
+    g_demand = 0;
+    sendDemandFrame(0);
+    lastSentDemand = 0;
+    lastSendMillis = millis();
+    LOG("RS485: Notaus-Frame 0W sofort gesendet");
 }
 
 void rs485Begin() {

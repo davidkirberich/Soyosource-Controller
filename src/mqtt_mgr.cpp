@@ -91,8 +91,16 @@ static void publishDiscoverySensor(const char *objectId, const char *name, const
 }
 
 static void publishDiscovery() {
-    publishDiscoverySensor("demand", "Soyo Demand", "W", "{{ value_json.demand }}", nullptr, false);
+    publishDiscoverySensor("demand", "Soyo Demand gesamt", "W", "{{ value_json.demand }}", nullptr, false);
+    publishDiscoverySensor("demand_per_inverter", "Soyo Demand pro Inverter", "W", "{{ value_json.demand_per_inverter }}", nullptr, false);
     publishDiscoverySensor("netz", "Soyo Netz", "W", "{{ value_json.netz }}", nullptr, false);
+    publishDiscoverySensor("verbrauch_l1", "Verbrauchszähler L1", "W", "{{ value_json.verbrauch_l1 }}", nullptr, false);
+    publishDiscoverySensor("verbrauch_l2", "Verbrauchszähler L2", "W", "{{ value_json.verbrauch_l2 }}", nullptr, false);
+    publishDiscoverySensor("verbrauch_l3", "Verbrauchszähler L3", "W", "{{ value_json.verbrauch_l3 }}", nullptr, false);
+    publishDiscoverySensor("einspeisung", "Einspeisezähler gesamt", "W", "{{ value_json.einspeisung }}", nullptr, false);
+    publishDiscoverySensor("einspeisung_l1", "Einspeisezähler L1", "W", "{{ value_json.einspeisung_l1 }}", nullptr, false);
+    publishDiscoverySensor("einspeisung_l2", "Einspeisezähler L2", "W", "{{ value_json.einspeisung_l2 }}", nullptr, false);
+    publishDiscoverySensor("einspeisung_l3", "Einspeisezähler L3", "W", "{{ value_json.einspeisung_l3 }}", nullptr, false);
     publishDiscoverySensor("rssi", "Soyo RSSI", "dBm", "{{ value_json.rssi }}", "signal_strength", false);
     publishDiscoverySensor("uptime", "Soyo Uptime", "s", "{{ value_json.uptime }}", nullptr, false);
     publishDiscoverySensor("heap", "Soyo Heap", "B", "{{ value_json.heap }}", nullptr, false);
@@ -130,8 +138,16 @@ static void publishPeriodic() {
     lastPublishMillis = now;
 
     JsonDocument doc;
-    doc["demand"] = g_demand;
+    doc["demand"] = g_demand * config.soyo_count;
+    doc["demand_per_inverter"] = g_demand;
     doc["netz"] = g_netzwert;
+    if (g_shellyPhaseValid[0]) doc["verbrauch_l1"] = g_shellyPhasePower[0]; else doc["verbrauch_l1"] = nullptr;
+    if (g_shellyPhaseValid[1]) doc["verbrauch_l2"] = g_shellyPhasePower[1]; else doc["verbrauch_l2"] = nullptr;
+    if (g_shellyPhaseValid[2]) doc["verbrauch_l3"] = g_shellyPhasePower[2]; else doc["verbrauch_l3"] = nullptr;
+    if (g_shellyExportValid) doc["einspeisung"] = g_shellyExportTotalW; else doc["einspeisung"] = nullptr;
+    if (g_shellyExportPhaseValid[0]) doc["einspeisung_l1"] = g_shellyExportPhasePower[0]; else doc["einspeisung_l1"] = nullptr;
+    if (g_shellyExportPhaseValid[1]) doc["einspeisung_l2"] = g_shellyExportPhasePower[1]; else doc["einspeisung_l2"] = nullptr;
+    if (g_shellyExportPhaseValid[2]) doc["einspeisung_l3"] = g_shellyExportPhasePower[2]; else doc["einspeisung_l3"] = nullptr;
     doc["rssi"] = WiFi.RSSI();
     doc["mode"] = config.mode;
     doc["notaus"] = g_notaus;
@@ -179,4 +195,8 @@ void mqttLoop() {
 
     mqttClient.loop();
     publishPeriodic();
+}
+
+bool mqttIsConnected() {
+    return mqttClient.connected();
 }
