@@ -10,6 +10,8 @@ extern float         g_shellyExportPhasePower[3];
 extern bool          g_shellyExportPhaseValid[3];
 extern float         g_shellyExportTotalW;
 extern bool          g_shellyExportValid;
+extern bool          g_shellyExportStale;
+extern unsigned long g_lastExportMeasurementMillis;
 
 void shellyBegin();
 

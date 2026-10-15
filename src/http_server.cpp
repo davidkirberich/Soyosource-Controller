@@ -130,6 +130,8 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
   <div class="row"><span>Firmware</span><span id="buildTime">-</span></div>
   <div class="row"><span>Version</span><span id="gitVersion">-</span></div>
   <div class="row"><span>Freier Heap</span><span><span id="heap">-</span> B</span></div>
+  <div class="row"><span>Hauptschleife</span><span id="loopTiming">-</span></div>
+  <div class="hint">Mittel / Maximum im letzten Messfenster (ca. 5s), Spitze seit Start; Laufzeit inklusive Wartezeiten, keine CPU-Auslastung.</div>
   <div class="row"><span>Messwert</span><span id="measurementAge">-</span></div>
   <div class="row blink" id="dcRow"><span>DC-Einspeisung</span><span id="dcState">-</span></div>
 </div>
@@ -195,6 +197,12 @@ code{background:var(--bg);border:1px solid var(--border);border-radius:4px;paddi
     <input type="password" id="mqtt_pass">
     <label>Sub-Topic (Messwert)</label>
     <input type="text" id="mqtt_sub_topic">
+    <label>Messwert-Eingabeformat (MqttSub)</label>
+    <select id="mqtt_input_format">
+      <option value="0">Zahl (W)</option>
+      <option value="1">Shelly-JSON (total_act_power)</option>
+    </select>
+    <p class="hint">Shelly-JSON nutzt ausschließlich die Gesamtwirkleistung total_act_power, unabhängig von der Phasenauswahl. Topic: &lt;Shelly-ID&gt;/status/em:0. Null und fehlende Felder sind keine Messwerte; 0 W und negative Werte sind gültig.</p>
     <label>Pub-Topic (Status)</label>
     <input type="text" id="mqtt_pub_topic">
     <p class="hint">MQTT verbindet sich mit dem Broker und veröffentlicht dort Statuswerte. Der MQTT-Statuspunkt auf der Hauptseite zeigt ausschließlich, ob aktuell eine Broker-Verbindung besteht.</p>
@@ -400,6 +408,8 @@ function refreshStatus(){
     if(d.einspeisung_l2_enabled) exportParts.push('L2 '+fmtPower(d.einspeisung_l2));
     if(d.einspeisung_l3_enabled) exportParts.push('L3 '+fmtPower(d.einspeisung_l3));
     exportParts.push('Gesamt '+fmtPower(d.einspeisung));
+    if(d.einspeisung_stale) exportParts.push('veraltet – vor '+d.einspeisung_age+'s aktualisiert');
+    else if(d.einspeisung===null) exportParts.push('nicht verfügbar');
     document.getElementById('exportStatus').textContent=exportParts.join(' / ');
     document.getElementById('exportStatusRow').style.display=d.einspeisung_configured?'flex':'none';
     document.getElementById('modeText').textContent=MODE_NAMES[d.mode]||d.mode;
@@ -408,6 +418,8 @@ function refreshStatus(){
     document.getElementById('buildTime').textContent=d.build_time;
     document.getElementById('gitVersion').textContent=d.git_version;
     document.getElementById('heap').textContent=d.heap;
+    document.getElementById('loopTiming').textContent=d.loop_avg_ms===null?'Messung läuft':
+      d.loop_avg_ms.toFixed(3)+' / '+d.loop_max_ms.toFixed(3)+' ms (Spitze '+d.loop_peak_ms.toFixed(3)+' ms)';
     document.getElementById('measurementAge').textContent='vor '+d.last_measurement_age+'s aktualisiert';
     document.getElementById('rssiBars').innerHTML=rssiBars(d.rssi);
     document.getElementById('dcState').textContent=(d.demand>0)?'aktiv':'aus';
@@ -519,6 +531,7 @@ function loadConfigForm(){
     document.getElementById('mqtt_user').value=c.mqtt_user||'';
     document.getElementById('mqtt_pass').value=c.mqtt_pass||'';
     document.getElementById('mqtt_sub_topic').value=c.mqtt_sub_topic||'';
+    document.getElementById('mqtt_input_format').value=c.mqtt_input_format||0;
     document.getElementById('mqtt_pub_topic').value=c.mqtt_pub_topic||'';
 
     document.getElementById('mode').value=c.mode||0;
@@ -588,6 +601,7 @@ const SECTION_BUILDERS = {
     mqtt_user: document.getElementById('mqtt_user').value,
     mqtt_pass: document.getElementById('mqtt_pass').value,
     mqtt_sub_topic: document.getElementById('mqtt_sub_topic').value,
+    mqtt_input_format: parseInt(document.getElementById('mqtt_input_format').value),
     mqtt_pub_topic: document.getElementById('mqtt_pub_topic').value
   }),
   mode: () => ({
@@ -700,6 +714,9 @@ static void handleStatus() {
     if (g_shellyExportPhaseValid[1]) doc["einspeisung_l2"] = g_shellyExportPhasePower[1]; else doc["einspeisung_l2"] = nullptr;
     if (g_shellyExportPhaseValid[2]) doc["einspeisung_l3"] = g_shellyExportPhasePower[2]; else doc["einspeisung_l3"] = nullptr;
     if (g_shellyExportValid) doc["einspeisung"] = g_shellyExportTotalW; else doc["einspeisung"] = nullptr;
+    doc["einspeisung_stale"] = g_shellyExportStale;
+    if (g_shellyExportValid) doc["einspeisung_age"] = (millis() - g_lastExportMeasurementMillis) / 1000;
+    else doc["einspeisung_age"] = nullptr;
     doc["rssi"] = WiFi.RSSI();
     doc["mode"] = config.mode;
     doc["notaus"] = g_notaus;
@@ -716,6 +733,14 @@ static void handleStatus() {
     doc["build_time"] = String(__DATE__) + " " + String(__TIME__);
     doc["git_version"] = GIT_VERSION;
     doc["heap"] = ESP.getFreeHeap();
+    if (g_loopTiming.ready) {
+        doc["loop_avg_ms"] = g_loopTiming.averageUs / 1000.0;
+        doc["loop_max_ms"] = g_loopTiming.maximumUs / 1000.0;
+    } else {
+        doc["loop_avg_ms"] = nullptr;
+        doc["loop_max_ms"] = nullptr;
+    }
+    doc["loop_peak_ms"] = g_loopTiming.peakUs / 1000.0;
     doc["ap_mode"] = wifiMgrIsApMode();
     doc["wifi_state"] = (int)wifiMgrGetState();
     doc["last_measurement_age"] = (millis() - g_lastMeasurementMillis) / 1000;

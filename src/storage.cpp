@@ -20,6 +20,7 @@ void configSetDefaults(Config &c) {
 
     c.mqtt_enabled = false;
     c.mqtt_port = 1883;
+    c.mqtt_input_format = MQTT_INPUT_NUMBER;
     strlcpy(c.mqtt_sub_topic, "Soyosource/L1L2L3", sizeof(c.mqtt_sub_topic));
     strlcpy(c.mqtt_pub_topic, "Soyosource/status", sizeof(c.mqtt_pub_topic));
 
@@ -74,6 +75,7 @@ static void configToDoc(const Config &c, JsonDocument &doc) {
     doc["mqtt_user"] = c.mqtt_user;
     doc["mqtt_pass"] = c.mqtt_pass;
     doc["mqtt_sub_topic"] = c.mqtt_sub_topic;
+    doc["mqtt_input_format"] = c.mqtt_input_format;
     doc["mqtt_pub_topic"] = c.mqtt_pub_topic;
 
     doc["mode"] = c.mode;
@@ -153,6 +155,14 @@ static void docToConfig(JsonDocument &doc, Config &c) {
     if (!doc["mqtt_user"].isNull()) strlcpy(c.mqtt_user, doc["mqtt_user"], sizeof(c.mqtt_user));
     if (!doc["mqtt_pass"].isNull()) strlcpy(c.mqtt_pass, doc["mqtt_pass"], sizeof(c.mqtt_pass));
     if (!doc["mqtt_sub_topic"].isNull()) strlcpy(c.mqtt_sub_topic, doc["mqtt_sub_topic"], sizeof(c.mqtt_sub_topic));
+    if (!doc["mqtt_input_format"].isNull()) {
+        if (doc["mqtt_input_format"].is<uint8_t>() &&
+            doc["mqtt_input_format"].as<uint8_t>() <= MQTT_INPUT_SHELLY_JSON) {
+            c.mqtt_input_format = doc["mqtt_input_format"].as<uint8_t>();
+        } else {
+            LOG("Config: ungültiges MQTT-Eingabeformat, Einstellung unverändert");
+        }
+    }
     if (!doc["mqtt_pub_topic"].isNull()) strlcpy(c.mqtt_pub_topic, doc["mqtt_pub_topic"], sizeof(c.mqtt_pub_topic));
 
     if (!doc["mode"].isNull()) c.mode = doc["mode"];
@@ -307,7 +317,7 @@ static bool jsonNeedsRestart(JsonDocument &doc) {
     static const char *restartFields[] = {
         "wifi_ssid", "wifi_pass", "wifi_ssid2", "wifi_pass2", "wifi_static", "wifi_ip", "wifi_gw", "wifi_mask", "wifi_11n",
         "mqtt_enabled", "mqtt_broker", "mqtt_port", "mqtt_user", "mqtt_pass",
-        "mqtt_sub_topic", "mqtt_pub_topic", "ota_pass"
+        "mqtt_sub_topic", "mqtt_input_format", "mqtt_pub_topic", "ota_pass"
     };
     for (const char *field : restartFields) {
         if (!doc[field].isNull()) return true;

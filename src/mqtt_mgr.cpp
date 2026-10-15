@@ -3,6 +3,9 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <ctype.h>
+#include <math.h>
+#include <stdlib.h>
 
 #include "config.h"
 #include "rs485.h"
@@ -25,21 +28,55 @@ static const unsigned long PUBLISH_INTERVAL_MS = 3000;
 // abonnierten Topic (config.mqtt_sub_topic) eine neue Nachricht ankommt. Man
 // registriert diese Funktion einmal per setCallback() (siehe mqttBegin unten)
 // und ruft sie selbst nie direkt auf.
-// payload ist keine fertige Zeichenkette, sondern nur ein Roh-Byte-Puffer ohne
-// Nullterminierung -- deshalb wird er hier erst in ein eigenes, garantiert
-// nullterminiertes char-Array kopiert, bevor atof() ihn als Zahl lesen kann.
+// Der Callback läuft synchron in mqttClient.loop(), nicht im TCP-Callback.
 static void mqttCallback(char *topic, byte *payload, unsigned int length) {
     (void)topic; // Topic wird ignoriert, wir haben nur ein einziges Sub-Topic abonniert
 
     if (config.mode != MODE_MQTT_SUB) return;
 
-    char buf[32];
-    // Payload auf Puffergröße begrenzen, falls eine überlange Nachricht ankommt
-    unsigned int n = length < sizeof(buf) - 1 ? length : sizeof(buf) - 1;
-    memcpy(buf, payload, n);
-    buf[n] = '\0'; // String-Ende markieren, sonst würde atof() über den Puffer hinauslesen
-
-    float val = atof(buf);
+    float val;
+    if (config.mqtt_input_format == MQTT_INPUT_SHELLY_JSON) {
+        JsonDocument filter;
+        filter["total_act_power"] = true;
+        JsonDocument doc;
+        const DeserializationError err = deserializeJson(
+            doc, reinterpret_cast<const char *>(payload), length,
+            DeserializationOption::Filter(filter));
+        if (err) {
+            LOG(("MQTT: ungültiges Shelly-JSON: " + String(err.c_str())).c_str());
+            return;
+        }
+        JsonVariantConst total = doc["total_act_power"];
+        if (!total.is<float>()) {
+            LOG("MQTT: total_act_power fehlt oder ist keine Zahl");
+            return;
+        }
+        val = total.as<float>();
+    } else {
+        char buf[32];
+        if (length == 0 || length >= sizeof(buf) ||
+            memchr(payload, '\0', length) != nullptr) {
+            LOG("MQTT: ungültige Länge oder Nullbyte im Zahlenwert");
+            return;
+        }
+        memcpy(buf, payload, length);
+        buf[length] = '\0';
+        char *end;
+        val = strtof(buf, &end);
+        if (end == buf) {
+            LOG("MQTT: Messwert ist keine Zahl");
+            return;
+        }
+        while (isspace(static_cast<unsigned char>(*end))) end++;
+        if (*end != '\0') {
+            LOG("MQTT: unerwarteter Inhalt nach dem Zahlenwert");
+            return;
+        }
+    }
+    if (!isfinite(val)) {
+        LOG("MQTT: Messwert ist nicht endlich");
+        return;
+    }
     applyMeasurement(val);
     LOG(("MQTT: Messwert empfangen " + String(val)).c_str());
 }
@@ -148,6 +185,9 @@ static void publishPeriodic() {
     if (g_shellyExportPhaseValid[0]) doc["einspeisung_l1"] = g_shellyExportPhasePower[0]; else doc["einspeisung_l1"] = nullptr;
     if (g_shellyExportPhaseValid[1]) doc["einspeisung_l2"] = g_shellyExportPhasePower[1]; else doc["einspeisung_l2"] = nullptr;
     if (g_shellyExportPhaseValid[2]) doc["einspeisung_l3"] = g_shellyExportPhasePower[2]; else doc["einspeisung_l3"] = nullptr;
+    doc["einspeisung_stale"] = g_shellyExportStale;
+    if (g_shellyExportValid) doc["einspeisung_age"] = (millis() - g_lastExportMeasurementMillis) / 1000;
+    else doc["einspeisung_age"] = nullptr;
     doc["rssi"] = WiFi.RSSI();
     doc["mode"] = config.mode;
     doc["notaus"] = g_notaus;
@@ -157,11 +197,16 @@ static void publishPeriodic() {
 
     String payload;
     serializeJson(doc, payload);
-    mqttClient.publish(config.mqtt_pub_topic, payload.c_str());
+    if (!mqttClient.publish(config.mqtt_pub_topic, payload.c_str())) {
+        LOG("MQTT: Status konnte nicht veröffentlicht werden");
+    }
 }
 
 void mqttBegin() {
     if (!config.mqtt_enabled) return;
+    if (!mqttClient.setBufferSize(768)) {
+        LOG("MQTT: Statuspuffer konnte nicht vergrößert werden");
+    }
     mqttClient.setServer(config.mqtt_broker, config.mqtt_port);
     mqttClient.setCallback(mqttCallback);
 

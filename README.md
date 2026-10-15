@@ -243,15 +243,43 @@ formatiert, Gerät startet neu und geht wieder in den AP-Setup-Modus.
   Ausgewählte Phasen und Summe werden auf der Hauptseite sowie im MQTT-Status
   ausgegeben. Messfehler dieses reinen Monitoring-Zählers beeinflussen weder
   Regelung noch Fallback.
+  Bei kurzen Abruffehlern bleiben letzte Werte mit sichtbarer
+  Veraltet-Kennzeichnung erhalten; nach 10 Sekunden ohne Erfolg werden sie
+  ungültig. Änderungen an Adresse oder Phasenauswahl verwerfen alte Werte.
+  HTTP-Anfragen beider Zähler starten mindestens ein halbes Poll-Intervall
+  versetzt, mit Vorrang für den Verbrauchszähler; langsame Antworten können
+  die tatsächliche Abfragerate reduzieren. Jeder Abruf erhält erneut einen
+  2-Sekunden-Inaktivitätstimeout und wird nach 3 Sekunden Gesamtdauer abgebrochen.
 - **MQTT-Status**: `demand` ist die angeforderte Gesamtleistung über alle
   konfigurierten Soyos; `demand_per_inverter` enthält zusätzlich den
   Pro-Inverter-Sollwert. `verbrauch_l1` bis `verbrauch_l3` und
   `einspeisung_l1` bis `einspeisung_l3` enthalten die gültigen Phasenwerte
   der jeweiligen Zähler. Nicht verfügbare Werte werden als JSON-`null`
   veröffentlicht.
+  `einspeisung_stale` kennzeichnet gehaltene, veraltete Einspeisewerte;
+  `einspeisung_age` enthält ihr Alter in Sekunden (sonst `null`).
+- **MQTT-Messwerte (MqttSub)**: Das Eingabeformat ist konfigurierbar:
+  `mqtt_input_format=0` erwartet eine reine Watt-Zahl (Standard, auch für
+  bestehende Konfigurationen), `1` erwartet Shelly-JSON und liest ausschließlich
+  das numerische Feld `total_act_power`. Als Sub-Topic dient
+  `<Shelly-ID>/status/em:0`. Phasenauswahl und Einzelphasenfelder werden hierbei
+  nicht ausgewertet. 0 W und negative Werte sind gültig; fehlende Felder,
+  `null`, Zeichenketten, nicht endliche Werte und fehlerhafte Nachrichten
+  werden geloggt und aktualisieren weder Messwert noch Empfangszeit.
+  Die bestehende 60-Sekunden-Messwertüberwachung bleibt unverändert und kann
+  einen Neustart auslösen. Regelmäßige Veröffentlichungen sicherstellen,
+  auch bei unveränderten Werten. Retained Messwerte vermeiden: Ihr Alter
+  lässt sich mit dem verwendeten MQTT-Client nicht feststellen.
 - **JSON HTTP Client**: generischer Poll gegen eine beliebige JSON-URL mit
   Punkt-separiertem Pfad (z.B. `StatusSNS.SML.DJ_TPWRCURR`), gleiches
   einstellbares Poll-Intervall wie bei Shelly.
+- **Laufzeitdiagnose**: Die Hauptseite zeigt Mittelwert und Maximum der
+  Hauptschleifen-Dauer im letzten Messfenster (ca. 5 Sekunden) sowie die
+  Spitze seit Start in Millisekunden. Die Messung umfasst alle Module der
+  Hauptschleife inklusive blockierender Wartezeiten, aber nicht die
+  Hintergrundarbeit zwischen Durchläufen. Sie ist keine CPU-Auslastung.
+  Die Status-API liefert `loop_avg_ms`, `loop_max_ms` und `loop_peak_ms`;
+  Mittelwert und Fenstermaximum sind vor dem ersten Abschluss `null`.
 
 Bei den pollenden Modi (Shelly/JSON) schaltet die Firmware nach 10 Fehlversuchen in
 einen Fallback-Zustand (`fallback_watt`) und kehrt nach 3 erfolgreichen Antworten

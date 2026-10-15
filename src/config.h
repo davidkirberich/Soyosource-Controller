@@ -12,6 +12,11 @@ enum OperatingMode : uint8_t {
     MODE_JSON_HTTP       = 5  // generischer JSON-HTTP-Client
 };
 
+enum MqttInputFormat : uint8_t {
+    MQTT_INPUT_NUMBER = 0,
+    MQTT_INPUT_SHELLY_JSON = 1
+};
+
 // Alle Einstellungen des Geräts in einem einzigen Behälter (struct). Es gibt
 // genau ein Config-Objekt im ganzen Projekt (siehe "extern Config config;"
 // unten und dessen Definition in main.cpp) — jedes Modul, das eine Einstellung
@@ -48,6 +53,7 @@ struct Config {
     char     mqtt_user[32];
     char     mqtt_pass[32];
     char     mqtt_sub_topic[64];
+    uint8_t  mqtt_input_format;
     char     mqtt_pub_topic[64];
 
     // Betriebsmodus

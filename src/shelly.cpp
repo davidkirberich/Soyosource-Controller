@@ -18,6 +18,8 @@ float         g_shellyExportPhasePower[3] = {0, 0, 0};
 bool          g_shellyExportPhaseValid[3] = {false, false, false};
 float         g_shellyExportTotalW = 0;
 bool          g_shellyExportValid = false;
+bool          g_shellyExportStale = false;
+unsigned long g_lastExportMeasurementMillis = 0;
 
 // Abfrageintervall ist über config.poll_interval_ms einstellbar (400-2000ms,
 // Webinterface -> Konfiguration -> Regelung), Grenzen werden beim Laden/
@@ -45,7 +47,20 @@ static const uint8_t FALLBACK_CLEAR_SUCCESSES = 3;
 
 // asyncHTTPrequest kennt nur ganze Sekunden als Timeout (anders als die
 // frühere HTTPClient-basierte Lösung mit Millisekunden).
-static const int HTTP_TIMEOUT_S = 1;
+static const int HTTP_TIMEOUT_S = 2;
+static const unsigned long HTTP_DEADLINE_MS = 3000;
+static const unsigned long EXPORT_STALE_MS = 10000;
+static unsigned long lastHttpStartMillis = 0;
+static bool httpStarted = false;
+
+static bool canStartHttp(unsigned long now) {
+    return !httpStarted || now - lastHttpStartMillis >= config.poll_interval_ms / 2;
+}
+
+static void markHttpStart(unsigned long now) {
+    lastHttpStartMillis = now;
+    httpStarted = true;
+}
 
 // Wie schon vorher bei httpClient (WiFiClient): EIN Anfrage-Objekt wird für
 // alle Abfragen wiederverwendet statt pro Poll neu angelegt -- asyncHTTPrequest
@@ -56,6 +71,21 @@ static bool exportRequestPending = false;
 static unsigned long lastExportPollMillis = 0;
 static unsigned long exportFetchStartMillis = 0;
 static bool exportErrorActive = false;
+static bool exportRequestFailed = false;
+static char exportIp[sizeof(config.shelly_export_ip)] = {};
+static uint8_t exportPhaseMask = 0;
+
+static uint8_t selectedExportPhases() {
+    return (config.shelly_export_l1 ? 1 : 0) |
+           (config.shelly_export_l2 ? 2 : 0) |
+           (config.shelly_export_l3 ? 4 : 0);
+}
+
+static void clearExportMeasurement() {
+    g_shellyExportValid = false;
+    g_shellyExportStale = false;
+    for (uint8_t i = 0; i < 3; i++) g_shellyExportPhaseValid[i] = false;
+}
 
 // Modus, für den GERADE eine Anfrage läuft (open() wurde aufgerufen, Antwort
 // aber noch nicht da) -- der Callback in onReadyStateChange() feuert erst
@@ -117,9 +147,11 @@ static bool parseShellyGen2Phases(JsonDocument &doc, bool phase1Selected,
 }
 
 static void setExportUnavailable(const char *reason) {
-    g_shellyExportValid = false;
-    for (uint8_t i = 0; i < 3; i++) g_shellyExportPhaseValid[i] = false;
-    if (reason != nullptr && !exportErrorActive) LOG(reason);
+    g_shellyExportStale = g_shellyExportValid;
+    if (reason != nullptr && !exportErrorActive) {
+        LOG((String(reason) + ", Dauer=" + String(millis() - exportFetchStartMillis) +
+             "ms, WLAN=" + String(WiFi.status()) + ", RSSI=" + String(WiFi.RSSI())).c_str());
+    }
     exportErrorActive = reason != nullptr;
 }
 
@@ -151,30 +183,57 @@ static void processFinishedExportRequest() {
     }
     g_shellyExportTotalW = totalWatt;
     g_shellyExportValid = true;
+    g_shellyExportStale = false;
+    g_lastExportMeasurementMillis = millis();
     exportErrorActive = false;
     LOG(("Einspeisezähler-Poll: " + String(millis() - exportFetchStartMillis) + "ms (OK)").c_str());
 }
 
 static void shellyExportLoop() {
+    unsigned long now = millis();
+    uint8_t phaseMask = selectedExportPhases();
+    if (strcmp(exportIp, config.shelly_export_ip) != 0 || exportPhaseMask != phaseMask) {
+        strlcpy(exportIp, config.shelly_export_ip, sizeof(exportIp));
+        exportPhaseMask = phaseMask;
+        clearExportMeasurement();
+        exportErrorActive = false;
+        if (exportRequestPending && exportRequest.readyState() != 4) {
+            exportRequestFailed = true;
+            exportRequest.abort();
+        } else if (exportRequestPending) {
+            exportRequestFailed = true;
+        }
+    }
+    if (g_shellyExportValid && now - g_lastExportMeasurementMillis >= EXPORT_STALE_MS) {
+        clearExportMeasurement();
+    }
     if (exportRequestPending) {
-        if (exportRequest.readyState() != 4) return;
-        processFinishedExportRequest();
+        if (exportRequest.readyState() != 4) {
+            if (!exportRequestFailed && now - exportFetchStartMillis >= HTTP_DEADLINE_MS) {
+                exportRequestFailed = true;
+                setExportUnavailable("Einspeisezähler: Gesamtdauer überschritten, Anfrage abgebrochen");
+                exportRequest.abort();
+            }
+            return;
+        }
+        if (!exportRequestFailed) processFinishedExportRequest();
         exportRequestPending = false;
         return;
     }
 
     if (strlen(config.shelly_export_ip) == 0) {
-        setExportUnavailable(nullptr);
+        clearExportMeasurement();
         return;
     }
 
     if (!config.shelly_export_l1 && !config.shelly_export_l2 && !config.shelly_export_l3) {
+        clearExportMeasurement();
         setExportUnavailable("Einspeisezähler: keine Phase ausgewählt");
         return;
     }
 
-    unsigned long now = millis();
     if (now - lastExportPollMillis < config.poll_interval_ms) return;
+    if (!canStartHttp(now)) return;
     lastExportPollMillis = now;
     exportFetchStartMillis = now;
 
@@ -184,12 +243,18 @@ static void shellyExportLoop() {
     }
 
     String url = String("http://") + config.shelly_export_ip + "/rpc/EM.GetStatus?id=0";
+    exportRequest.setTimeout(HTTP_TIMEOUT_S);
+    markHttpStart(now);
     if (!exportRequest.open("GET", url.c_str())) {
         setExportUnavailable("Einspeisezähler: Anfrage konnte nicht gestartet werden");
         return;
     }
-    exportRequest.send();
     exportRequestPending = true;
+    exportRequestFailed = !exportRequest.send();
+    if (exportRequestFailed) {
+        setExportUnavailable("Einspeisezähler: send() fehlgeschlagen");
+        exportRequest.abort();
+    }
 }
 
 // Baut die abzufragende URL für den übergebenen Modus. Leerer String heißt
@@ -304,6 +369,10 @@ static void leaveFallbackIfReady() {
 static void onFetchDone(bool ok, float watt, const float phaseWatts[3],
                         const bool phaseValid[3]) {
     LOG(("Poll-Dauer: " + String(millis() - fetchStartMillis) + "ms (" + (ok ? "OK" : "Fehler") + ")").c_str());
+    if (!ok) {
+        LOG(("Shelly/JsonHttp: WLAN=" + String(WiFi.status()) +
+             ", RSSI=" + String(WiFi.RSSI())).c_str());
+    }
 
     if (ok) {
         applyMeasurement(watt);
@@ -312,12 +381,12 @@ static void onFetchDone(bool ok, float watt, const float phaseWatts[3],
             g_shellyPhaseValid[i] = phaseValid[i];
         }
         failCount = 0;
-        successCount++;
+        if (successCount < FALLBACK_CLEAR_SUCCESSES) successCount++;
         leaveFallbackIfReady();
     } else {
         for (uint8_t i = 0; i < 3; i++) g_shellyPhaseValid[i] = false;
         successCount = 0;
-        failCount++;
+        if (failCount < FALLBACK_TRIGGER_FAILS) failCount++;
         if (failCount >= FALLBACK_TRIGGER_FAILS) {
             enterFallback();
         }
@@ -328,6 +397,7 @@ static void onFetchDone(bool ok, float watt, const float phaseWatts[3],
 // true zwischen request.open() und der Auswertung der fertigen Antwort in
 // shellyLoop() -- siehe dort.
 static bool requestPending = false;
+static bool requestFailed = false;
 
 // Wertet eine fertige (readyState==4) Antwort aus: HTTP-Code prüfen, JSON
 // parsen, passend zu inFlightMode auswerten. WICHTIG: das darf NUR aus dem
@@ -371,34 +441,48 @@ void shellyBegin() {
     // request.readyState() selbst.
 }
 
-void shellyLoop() {
-    if (g_otaActive) {
-        return;
-    }
-    shellyExportLoop();
-
-    if (config.mode != MODE_SHELLY_GEN1 && config.mode != MODE_SHELLY_GEN2 && config.mode != MODE_JSON_HTTP) {
-        for (uint8_t i = 0; i < 3; i++) g_shellyPhaseValid[i] = false;
-        return;
-    }
-
+static void shellyConsumptionLoop() {
     // Läuft noch eine Anfrage, deren Antwort wir noch nicht ausgewertet
     // haben? readyState bleibt nach Abschluss auf 4 stehen, bis der nächste
     // open() aufgerufen wird -- requestPending sorgt dafür, dass wir genau
     // einmal auswerten statt bei jedem loop()-Durchlauf erneut.
     if (requestPending) {
         if (request.readyState() != 4 /* readyStateDone */) {
+            if (!requestFailed && inFlightMode != config.mode) {
+                requestFailed = true;
+                LOG("Shelly/JsonHttp: Modus geändert, Anfrage abgebrochen");
+                request.abort();
+            } else if (!requestFailed && millis() - fetchStartMillis >= HTTP_DEADLINE_MS) {
+                requestFailed = true;
+                LOG("Shelly/JsonHttp: Gesamtdauer überschritten, Anfrage abgebrochen");
+                request.abort();
+            }
             return; // noch nicht fertig, beim nächsten Mal wieder schauen
         }
-        processFinishedRequest();
+        if (inFlightMode != config.mode) {
+            for (uint8_t i = 0; i < 3; i++) g_shellyPhaseValid[i] = false;
+            inFlightMode = 0;
+        } else if (requestFailed) {
+            const float noPhaseWatts[3] = {0, 0, 0};
+            const bool noPhaseValid[3] = {false, false, false};
+            onFetchDone(false, 0, noPhaseWatts, noPhaseValid);
+        } else {
+            processFinishedRequest();
+        }
         requestPending = false;
         return; // nächste Anfrage erst wieder nach Ablauf von poll_interval_ms
+    }
+
+    if (config.mode != MODE_SHELLY_GEN1 && config.mode != MODE_SHELLY_GEN2 && config.mode != MODE_JSON_HTTP) {
+        for (uint8_t i = 0; i < 3; i++) g_shellyPhaseValid[i] = false;
+        return;
     }
 
     unsigned long now = millis();
     if (now - lastPollMillis < config.poll_interval_ms) {
         return;
     }
+    if (!canStartHttp(now)) return;
     lastPollMillis = now;
     fetchStartMillis = now;
 
@@ -421,6 +505,9 @@ void shellyLoop() {
     inFlightMode = config.mode;
 
     String url = buildUrlForMode(config.mode);
+    // Die Bibliothek deaktiviert den Timeout nach jeder erfolgreichen Antwort.
+    request.setTimeout(HTTP_TIMEOUT_S);
+    markHttpStart(now);
     if (url.length() == 0 || !request.open("GET", url.c_str())) {
         LOG("Shelly/JsonHttp: open() fehlgeschlagen (URL leer/ungültig?)");
         const float noPhaseWatts[3] = {0, 0, 0};
@@ -428,6 +515,16 @@ void shellyLoop() {
         onFetchDone(false, 0, noPhaseWatts, noPhaseValid);
         return;
     }
-    request.send();
     requestPending = true;
+    requestFailed = !request.send();
+    if (requestFailed) {
+        LOG("Shelly/JsonHttp: send() fehlgeschlagen");
+        request.abort();
+    }
+}
+
+void shellyLoop() {
+    if (g_otaActive) return;
+    shellyConsumptionLoop();
+    shellyExportLoop();
 }

@@ -112,6 +112,15 @@ static const char HELP_HTML[] PROGMEM = R"rawliteral(
   MQTT-Statuspunkt auf der Hauptseite zeigt ausschließlich, ob gerade eine
   Verbindung zum Broker besteht. Änderungen an MQTT-Einstellungen benötigen
   einen Neustart.</p>
+  <p>Im Modus <b>MqttSub</b> bestimmt das MQTT-Eingabeformat, ob eine reine
+  Watt-Zahl oder Shelly-JSON erwartet wird. Shelly-JSON liest ausschließlich
+  <code>total_act_power</code> aus dem Topic
+  <code>&lt;Shelly-ID&gt;/status/em:0</code>, ohne Phasenauswahl.
+  0 W und negative Werte sind gültig; ungültige Nachrichten aktualisieren
+  den Messwert nicht. Die bestehende 60-Sekunden-Messwertüberwachung bleibt
+  aktiv und kann bei ausbleibenden Messwerten einen Neustart auslösen.
+  Daher regelmäßige Veröffentlichungen sicherstellen und retained Messwerte
+  vermeiden: Ihr ursprüngliches Alter kann dieser MQTT-Client nicht erkennen.</p>
   <p><b>OTA</b> ermöglicht den Firmware-Upload über die Update-Seite im WLAN.
   Das eingestellte Passwort schützt diesen Upload; eine Passwortänderung
   wird nach einem Neustart wirksam.</p>

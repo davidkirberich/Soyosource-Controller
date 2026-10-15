@@ -28,6 +28,12 @@
 // in config.h -- dort wird sie nur bekanntgegeben, hier tatsächlich angelegt).
 Config config;
 
+LoopTimingStats g_loopTiming;
+static uint64_t loopDurationSumUs = 0;
+static uint32_t loopSamples = 0;
+static uint32_t loopMaximumUs = 0;
+static unsigned long loopWindowStartMillis = 0;
+
 static unsigned long lastHeapLogMillis = 0;
 static const unsigned long HEAP_LOG_INTERVAL_MS = 30000;
 static const uint32_t HEAP_MIN_BYTES = 4096;
@@ -233,6 +239,7 @@ void setup() {
     g_lastMeasurementMillis = millis();
 
     ESP.wdtEnable(0); // Software-Watchdog aktivieren (siehe runWatchdog)
+    loopWindowStartMillis = millis();
 }
 
 // Läuft ab jetzt endlos, wieder und wieder, viele hundert Mal pro Sekunde.
@@ -242,6 +249,7 @@ void setup() {
 // Shelly gewartet wird, kann trotzdem weiterhin die Webseite ausgeliefert,
 // RS485 bedient und die LED aktualisiert werden.
 void loop() {
+    const uint32_t loopStartUs = micros();
     wifiMgrLoop();
     ledLoop();
     telnetLogLoop();
@@ -254,4 +262,21 @@ void loop() {
 
     runControlLoop();
     runWatchdog();
+
+    // Wall time includes blocking waits, but not background work between loops.
+    const uint32_t durationUs = micros() - loopStartUs;
+    loopDurationSumUs += durationUs;
+    loopSamples++;
+    if (durationUs > loopMaximumUs) loopMaximumUs = durationUs;
+    if (durationUs > g_loopTiming.peakUs) g_loopTiming.peakUs = durationUs;
+    const unsigned long now = millis();
+    if (now - loopWindowStartMillis >= 5000) {
+        g_loopTiming.averageUs = loopDurationSumUs / loopSamples;
+        g_loopTiming.maximumUs = loopMaximumUs;
+        g_loopTiming.ready = true;
+        loopDurationSumUs = 0;
+        loopSamples = 0;
+        loopMaximumUs = 0;
+        loopWindowStartMillis = now;
+    }
 }
